@@ -1,0 +1,192 @@
+// Código teste com LEDs e sensor ultrassônico HC-SR04
+
+#include <Arduino.h>
+
+// Pinos dos motores (LEDs)
+#define MOTOR_CIMA   14
+#define MOTOR_MOLA   27
+#define MOTOR_BAIXO  26
+
+// Pinos do ultrassônico
+#define TRIG_PIN 32
+#define ECHO_PIN 33
+
+// Estados possíveis
+typedef enum {
+  ESTADO_RELAXADO,
+  PRESO_DISTENDIDO,
+  SOBE_1,
+  DESCE_1,
+  PRESO_CONTRAIDO,
+  SOBE_2,
+  DESCE_2
+} Estado;
+
+// Estado atual
+Estado estado = PRESO_DISTENDIDO; // começa já no PRESO_DISTENDIDO
+
+// Controle do ciclo
+bool cicloSubida = false;
+bool cicloDescida = false;
+
+// Função para imprimir nome do estado
+const char* nomeEstado(Estado e) {
+  switch (e) {
+    case ESTADO_RELAXADO: return "RELAXADO";
+    case PRESO_DISTENDIDO: return "PRESO_DISTENDIDO";
+    case SOBE_1: return "SOBE_1";
+    case DESCE_1: return "DESCE_1";
+    case PRESO_CONTRAIDO: return "PRESO_CONTRAIDO";
+    case SOBE_2: return "SOBE_2";
+    case DESCE_2: return "DESCE_2";
+    default: return "DESCONHECIDO";
+  }
+}
+
+// Atualiza saídas dos motores conforme estado
+void aplicaEstado(Estado e) {
+  switch (e) {
+    case ESTADO_RELAXADO:
+      digitalWrite(MOTOR_CIMA, LOW);
+      digitalWrite(MOTOR_MOLA, LOW);
+      digitalWrite(MOTOR_BAIXO, LOW);
+      break;
+
+    case PRESO_DISTENDIDO:
+      digitalWrite(MOTOR_CIMA, HIGH);
+      digitalWrite(MOTOR_MOLA, LOW);
+      digitalWrite(MOTOR_BAIXO, HIGH);
+      break;
+
+    case SOBE_1:
+      digitalWrite(MOTOR_CIMA, HIGH);
+      digitalWrite(MOTOR_MOLA, HIGH);
+      digitalWrite(MOTOR_BAIXO, LOW);
+      break;
+
+    case DESCE_1:
+      digitalWrite(MOTOR_CIMA, LOW);
+      digitalWrite(MOTOR_MOLA, HIGH);
+      digitalWrite(MOTOR_BAIXO, HIGH);
+      break;
+
+    case PRESO_CONTRAIDO:
+      digitalWrite(MOTOR_CIMA, HIGH);
+      digitalWrite(MOTOR_MOLA, HIGH);
+      digitalWrite(MOTOR_BAIXO, HIGH);
+      break;
+
+    case SOBE_2:
+      digitalWrite(MOTOR_CIMA, LOW);
+      digitalWrite(MOTOR_MOLA, HIGH);
+      digitalWrite(MOTOR_BAIXO, HIGH);
+      break;
+
+    case DESCE_2:
+      digitalWrite(MOTOR_CIMA, HIGH);
+      digitalWrite(MOTOR_MOLA, LOW);
+      digitalWrite(MOTOR_BAIXO, LOW);
+      break;
+  }
+  Serial.print("Novo estado: ");
+  Serial.println(nomeEstado(e));
+}
+
+// Lógica comum de pausa (botão P)
+Estado pausaEstado(Estado e) {
+  if (e == SOBE_1 || e == DESCE_1) return PRESO_CONTRAIDO;
+  else if (e == SOBE_2 || e == DESCE_2) return PRESO_DISTENDIDO;
+  else return e; // PRESO_CONTRAIDO ou PRESO_DISTENDIDO permanecem
+}
+
+// Mede a distância do ultrassônico (em mm)
+long medirDistancia() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duracao = pulseIn(ECHO_PIN, HIGH);
+  long distancia = duracao * 0.343 / 2; // velocidade som ~0.343 mm/us
+  return distancia; // em mm
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(MOTOR_CIMA, OUTPUT);
+  pinMode(MOTOR_MOLA, OUTPUT);
+  pinMode(MOTOR_BAIXO, OUTPUT);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  aplicaEstado(estado); // inicia no PRESO_DISTENDIDO
+  Serial.println("Digite 'w' para subir, 's' para descer, 'p' para pausar, 'a' para abortar");
+}
+
+void loop() {
+  // 🔹 Verifica sensor ultrassônico
+  long distancia = medirDistancia();
+  if (distancia > 0 && distancia <= 2000) { // <= 400 mm
+    Estado novo = pausaEstado(estado);
+    if (novo != estado) {   // só muda se for diferente
+      estado = novo;
+      cicloSubida = false;
+      cicloDescida = false;
+      aplicaEstado(estado);
+    }
+  }
+
+  // 🔹 Leitura de comandos do Serial
+  if (Serial.available() > 0) {
+    char comando = Serial.read();
+
+    if (comando == 'w') {
+      cicloSubida = true;
+      cicloDescida = false;
+    }
+    else if (comando == 's') {
+      cicloSubida = false;
+      cicloDescida = true;
+    }
+    else if (comando == 'p') {
+      estado = pausaEstado(estado);
+      cicloSubida = false;
+      cicloDescida = false;
+      aplicaEstado(estado);
+    }
+    else if (comando == 'a') {
+      // Primeiro aplica a pausa normal
+      estado = pausaEstado(estado);
+      aplicaEstado(estado);
+
+      // Depois força relaxado
+      delay(2000); // transição suave
+      estado = ESTADO_RELAXADO;
+      cicloSubida = false;
+      cicloDescida = false;
+      aplicaEstado(estado);
+    }
+  }
+
+  // 🔹 Avanço automático do ciclo com delay(2000)
+  if (cicloSubida) {
+    delay(2000);
+    if (estado == PRESO_DISTENDIDO) estado = SOBE_1;
+    else if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
+    else if (estado == PRESO_CONTRAIDO) estado = SOBE_2;
+    else if (estado == SOBE_2) estado = PRESO_DISTENDIDO;
+    aplicaEstado(estado);
+  }
+
+  if (cicloDescida) {
+    delay(2000);
+    if (estado == PRESO_DISTENDIDO) estado = DESCE_1;
+    else if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
+    else if (estado == PRESO_CONTRAIDO) estado = DESCE_2;
+    else if (estado == DESCE_2) estado = PRESO_DISTENDIDO;
+    aplicaEstado(estado);
+  }
+}
