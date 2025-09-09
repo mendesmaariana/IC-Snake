@@ -1,0 +1,199 @@
+#include <Arduino.h>
+#include <ESP32Servo.h>
+
+// Servos
+Servo motorCima;
+Servo motorMola;
+Servo motorBaixo;
+
+// Pinos dos servos
+#define MOTOR_CIMA_PIN   14
+#define MOTOR_MOLA_PIN   27
+#define MOTOR_BAIXO_PIN  26
+
+// Estados possíveis
+typedef enum {
+  ESTADO_RELAXADO,
+  PRESO_DISTENDIDO,
+  SOBE_1,
+  DESCE_1,
+  PRESO_CONTRAIDO,
+  SOBE_2,
+  DESCE_2
+} Estado;
+
+// Estado atual
+Estado estado = PRESO_DISTENDIDO; // começa já no PRESO_DISTENDIDO
+
+// Controle do ciclo
+bool cicloSubida = false;
+bool cicloDescida = false;
+
+// Função para imprimir nome do estado
+const char* nomeEstado(Estado e) {
+  switch (e) {
+    case ESTADO_RELAXADO: return "RELAXADO";
+    case PRESO_DISTENDIDO: return "PRESO_DISTENDIDO";
+    case SOBE_1: return "SOBE_1";
+    case DESCE_1: return "DESCE_1";
+    case PRESO_CONTRAIDO: return "PRESO_CONTRAIDO";
+    case SOBE_2: return "SOBE_2";
+    case DESCE_2: return "DESCE_2";
+    default: return "DESCONHECIDO";
+  }
+}
+
+// Função para setar servo como ativo/inativo
+void setServo(Servo &servo, bool ativo) {
+  if (ativo) servo.write(90);   // servo gira para 90° (ativo)
+  else servo.write(0);          // servo volta para 0° (inativo)
+}
+
+// Atualiza saídas dos motores conforme estado
+void aplicaEstado(Estado e) {
+  switch (e) {
+    case ESTADO_RELAXADO:
+      setServo(motorCima, false);
+      setServo(motorMola, false);
+      setServo(motorBaixo, false);
+      break;
+
+    case PRESO_DISTENDIDO:
+      setServo(motorCima, true);
+      setServo(motorMola, false);
+      setServo(motorBaixo, true);
+      break;
+
+    case SOBE_1:
+      setServo(motorCima, true);
+      setServo(motorMola, true);
+      setServo(motorBaixo, false);
+      break;
+
+    case DESCE_1:
+      setServo(motorCima, false);
+      setServo(motorMola, true);
+      setServo(motorBaixo, true);
+      break;
+
+    case PRESO_CONTRAIDO:
+      setServo(motorCima, true);
+      setServo(motorMola, true);
+      setServo(motorBaixo, true);
+      break;
+
+    case SOBE_2:
+      setServo(motorCima, false);
+      setServo(motorMola, false);
+      setServo(motorBaixo, true);
+      break;
+
+    case DESCE_2:
+      setServo(motorCima, true);
+      setServo(motorMola, false);
+      setServo(motorBaixo, false);
+      break;
+  }
+  Serial.print("Novo estado: ");
+  Serial.println(nomeEstado(e));
+}
+
+// Lógica comum de pausa (botão P)
+Estado pausaEstado(Estado e) {
+  if (e == SOBE_1 || e == DESCE_1) return PRESO_CONTRAIDO;
+  else if (e == SOBE_2 || e == DESCE_2) return PRESO_DISTENDIDO;
+  else return e; // PRESO_CONTRAIDO ou PRESO_DISTENDIDO permanecem
+}
+
+// Função para inverter direção quando mudar de comando
+void inverterDirecao(bool indoParaCima) {
+  if (indoParaCima && cicloDescida) {
+    // Estava descendo → inverter para subir
+    if (estado == DESCE_1) {
+      estado = PRESO_CONTRAIDO; aplicaEstado(estado); delay(2000);
+      estado = SOBE_1;
+    } else if (estado == DESCE_2) {
+      estado = PRESO_DISTENDIDO; aplicaEstado(estado); delay(2000);
+      estado = SOBE_2;
+    }
+  }
+  else if (!indoParaCima && cicloSubida) {
+    // Estava subindo → inverter para descer
+    if (estado == SOBE_1) {
+      estado = PRESO_CONTRAIDO; aplicaEstado(estado); delay(2000);
+      estado = DESCE_2;
+    } else if (estado == SOBE_2) {
+      estado = PRESO_DISTENDIDO; aplicaEstado(estado); delay(2000);
+      estado = DESCE_1;
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Anexa os servos aos pinos
+  motorCima.attach(MOTOR_CIMA_PIN);
+  motorMola.attach(MOTOR_MOLA_PIN);
+  motorBaixo.attach(MOTOR_BAIXO_PIN);
+
+  aplicaEstado(estado); // inicia no PRESO_DISTENDIDO
+  Serial.println("Digite 's' para subir, 'd' para descer, 'p' para pausar, 'a' para abortar");
+}
+
+void loop() {
+  // 🔹 Leitura de comandos do Serial
+  if (Serial.available() > 0) {
+    char comando = Serial.read();
+
+    if (comando == 's') {  // subir
+      inverterDirecao(true);
+      cicloSubida = true;
+      cicloDescida = false;
+      aplicaEstado(estado);
+    }
+    else if (comando == 'd') {  // descer
+      inverterDirecao(false);
+      cicloSubida = false;
+      cicloDescida = true;
+      aplicaEstado(estado);
+    }
+    else if (comando == 'p') {
+      estado = pausaEstado(estado);
+      cicloSubida = false;
+      cicloDescida = false;
+      aplicaEstado(estado);
+    }
+    else if (comando == 'a') {
+      // Primeiro aplica a pausa normal
+      estado = pausaEstado(estado);
+      aplicaEstado(estado);
+
+      // Depois força relaxado
+      delay(2000); // transição suave
+      estado = ESTADO_RELAXADO;
+      cicloSubida = false;
+      cicloDescida = false;
+      aplicaEstado(estado);
+    }
+  }
+
+  // 🔹 Avanço automático do ciclo com delay(2000)
+  if (cicloSubida) {
+    delay(2000);
+    if (estado == PRESO_DISTENDIDO) estado = SOBE_1;
+    else if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
+    else if (estado == PRESO_CONTRAIDO) estado = SOBE_2;
+    else if (estado == SOBE_2) estado = PRESO_DISTENDIDO;
+    aplicaEstado(estado);
+  }
+
+  if (cicloDescida) {
+    delay(2000);
+    if (estado == PRESO_DISTENDIDO) estado = DESCE_1;
+    else if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
+    else if (estado == PRESO_CONTRAIDO) estado = DESCE_2;
+    else if (estado == DESCE_2) estado = PRESO_DISTENDIDO;
+    aplicaEstado(estado);
+  }
+}
