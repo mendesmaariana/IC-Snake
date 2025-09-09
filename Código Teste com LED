@@ -1,15 +1,15 @@
-// falta trocar 'w' p 's' e 's' p 'd'; falta ajeitar mudança de direção, inclusive p estados PRESO
+// falta trocar 'w' p 's' e 's' p 'd'; falta ajeitar mudança de direção, inclusive p estados PRESO; consertar estado SOBE_2
 
 // Código teste com LEDs e sensor ultrassônico HC-SR04
 
 #include <Arduino.h>
 
-// Pinos dos motores (LEDs)
+// Pinos dos motores (LEDs simulando motores)
 #define MOTOR_CIMA   14
 #define MOTOR_MOLA   27
 #define MOTOR_BAIXO  26
 
-// Pinos do ultrassônico
+// Pinos do ultrassônico (não usado no Wokwi, mas mantido)
 #define TRIG_PIN 32
 #define ECHO_PIN 33
 
@@ -94,7 +94,7 @@ void aplicaEstado(Estado e) {
   Serial.println(nomeEstado(e));
 }
 
-// Lógica comum de pausa (botão P)
+// Lógica comum de pausa (botão P ou sensor)
 Estado pausaEstado(Estado e) {
   if (e == SOBE_1 || e == DESCE_1) return PRESO_CONTRAIDO;
   else if (e == SOBE_2 || e == DESCE_2) return PRESO_DISTENDIDO;
@@ -129,9 +129,9 @@ void setup() {
 }
 
 void loop() {
-  // 🔹 Verifica sensor ultrassônico
+  // 🔹 Verifica sensor ultrassônico (se distância <= 400 mm)
   long distancia = medirDistancia();
-  if (distancia > 0 && distancia <= 2000) { // <= 400 mm
+  if (distancia > 0 && distancia <= 400) {
     Estado novo = pausaEstado(estado);
     if (novo != estado) {   // só muda se for diferente
       estado = novo;
@@ -192,3 +192,4 @@ void loop() {
     aplicaEstado(estado);
   }
 }
+
