@@ -1,3 +1,5 @@
+// Falta sensor distância e troca de direção para quando tiver nos estados PRESO
+
 #include <Arduino.h>
 #include <ESP32Servo.h>
 
