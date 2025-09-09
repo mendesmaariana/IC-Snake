@@ -107,28 +107,19 @@ Estado pausaEstado(Estado e) {
   else return e; // PRESO_CONTRAIDO ou PRESO_DISTENDIDO permanecem
 }
 
-// Função para inverter direção quando mudar de comando
+// Inversão imediata de direção
 void inverterDirecao(bool indoParaCima) {
   if (indoParaCima && cicloDescida) {
     // Estava descendo → inverter para subir
-    if (estado == DESCE_1) {
-      estado = PRESO_CONTRAIDO; aplicaEstado(estado); delay(2000);
-      estado = SOBE_1;
-    } else if (estado == DESCE_2) {
-      estado = PRESO_DISTENDIDO; aplicaEstado(estado); delay(2000);
-      estado = SOBE_2;
-    }
+    if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
+    else if (estado == DESCE_2) estado = PRESO_DISTENDIDO;
   }
   else if (!indoParaCima && cicloSubida) {
     // Estava subindo → inverter para descer
-    if (estado == SOBE_1) {
-      estado = PRESO_CONTRAIDO; aplicaEstado(estado); delay(2000);
-      estado = DESCE_2;
-    } else if (estado == SOBE_2) {
-      estado = PRESO_DISTENDIDO; aplicaEstado(estado); delay(2000);
-      estado = DESCE_1;
-    }
+    if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
+    else if (estado == SOBE_2) estado = PRESO_DISTENDIDO;
   }
+  aplicaEstado(estado);
 }
 
 void setup() {
