@@ -1,3 +1,5 @@
+// falta trocar 'w' p 's' e 's' p 'd'; falta ajeitar mudança de direção, inclusive p estados PRESO
+
 // Código teste com LEDs e sensor ultrassônico HC-SR04
 
 #include <Arduino.h>
