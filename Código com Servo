@@ -1,19 +1,21 @@
-// Falta sensor distância
-
 #include <Arduino.h>
 #include <ESP32Servo.h>
 
 // Servos
 Servo motorCima;
-Servo motorMola;
+Servo motorMola1;
+Servo motorMola2;
+Servo motorMola3;
 Servo motorBaixo;
 
 // Pinos dos servos
-#define MOTOR_CIMA_PIN   14
-#define MOTOR_MOLA_PIN   27
+#define MOTOR_CIMA_PIN   27
+#define MOTOR_MOLA1_PIN  13
+#define MOTOR_Mola2_PIN  12
+#define MOTOR_MOLA3_PIN  14
 #define MOTOR_BAIXO_PIN  26
 
-// Estados possíveis
+// Estados possiveis
 typedef enum {
   ESTADO_RELAXADO,
   PRESO_DISTENDIDO,
@@ -25,13 +27,12 @@ typedef enum {
 } Estado;
 
 // Estado atual
-Estado estado = PRESO_DISTENDIDO; // começa já no PRESO_DISTENDIDO
+Estado estado = PRESO_DISTENDIDO;
 
 // Controle do ciclo
 bool cicloSubida = false;
 bool cicloDescida = false;
 
-// Função para imprimir nome do estado
 const char* nomeEstado(Estado e) {
   switch (e) {
     case ESTADO_RELAXADO: return "RELAXADO";
@@ -45,77 +46,89 @@ const char* nomeEstado(Estado e) {
   }
 }
 
-// Função para setar servo como ativo/inativo
-void setServo(Servo &servo, bool ativo) {
-  if (ativo) servo.write(90);   // servo gira para 90° (ativo)
-  else servo.write(0);          // servo volta para 0° (inativo)
+void setServoPosicao(Servo &servo, bool ativo) {
+  if (ativo) servo.write(90);
+  else servo.write(0);
 }
 
-// Atualiza saídas dos motores conforme estado
+// Move as 3 molas simultaneamente
+void setServoContinuo(int v1, int v2, int v3, unsigned long duracao) {
+  // 1. Manda os 3 começarem a girar
+  motorMola1.write(v1);
+  motorMola2.write(v2);
+  motorMola3.write(v3);
+  
+  // 2. Espera o tempo definido (os 3 estão girando agora juntos)
+  delay(duracao); 
+  
+  // 3. Manda os 3 pararem (90 = neutro)
+  motorMola1.write(90); 
+  motorMola2.write(90);
+  motorMola3.write(90);
+}
+
 void aplicaEstado(Estado e) {
+  Serial.print("Novo estado: ");
+  Serial.println(nomeEstado(e));
   switch (e) {
     case ESTADO_RELAXADO:
-      setServo(motorCima, false);
-      setServo(motorMola, false);
-      setServo(motorBaixo, false);
+      setServoPosicao(motorCima, false);
+      setServoPosicao(motorBaixo, false);
+      setServoContinuo(90, 90, 90, 0);
       break;
 
     case PRESO_DISTENDIDO:
-      setServo(motorCima, true);
-      setServo(motorMola, false);
-      setServo(motorBaixo, true);
+      setServoPosicao(motorCima, true);
+      setServoPosicao(motorBaixo, true);
+      setServoContinuo(90, 90, 90, 100); 
       break;
 
     case SOBE_1:
-      setServo(motorCima, true);
-      setServo(motorMola, true);
-      setServo(motorBaixo, false);
+      setServoPosicao(motorCima, true);
+      setServoPosicao(motorBaixo, false);
+      setServoContinuo(0, 0, 0, 2000); 
       break;
 
     case DESCE_1:
-      setServo(motorCima, false);
-      setServo(motorMola, true);
-      setServo(motorBaixo, true);
+      setServoPosicao(motorCima, false);
+      setServoPosicao(motorBaixo, true);
+      setServoContinuo(0, 0, 0, 2000);
       break;
 
     case PRESO_CONTRAIDO:
-      setServo(motorCima, true);
-      setServo(motorMola, true);
-      setServo(motorBaixo, true);
+      setServoPosicao(motorCima, true);
+      setServoPosicao(motorBaixo, true);
+      setServoContinuo(90, 90, 90, 100);
       break;
 
     case SOBE_2:
-      setServo(motorCima, false);
-      setServo(motorMola, false);
-      setServo(motorBaixo, true);
+      setServoPosicao(motorCima, false);
+      setServoPosicao(motorBaixo, true);
+      setServoContinuo(180, 180, 180, 2000);
       break;
 
     case DESCE_2:
-      setServo(motorCima, true);
-      setServo(motorMola, false);
-      setServo(motorBaixo, false);
+      setServoPosicao(motorCima, true);
+      setServoPosicao(motorBaixo, false);
+      setServoContinuo(180, 180, 180, 2000);
       break;
   }
-  Serial.print("Novo estado: ");
-  Serial.println(nomeEstado(e));
 }
 
-// Lógica comum de pausa (botão P)
+// Logica comum de pausa
 Estado pausaEstado(Estado e) {
   if (e == SOBE_1 || e == DESCE_1) return PRESO_CONTRAIDO;
   else if (e == SOBE_2 || e == DESCE_2) return PRESO_DISTENDIDO;
-  else return e; // PRESO_CONTRAIDO ou PRESO_DISTENDIDO permanecem
+  else return e;
 }
 
-// Inversão imediata de direção
+// Inversao imediata de direcao
 void inverterDirecao(bool indoParaCima) {
   if (indoParaCima && cicloDescida) {
-    // Estava descendo → inverter para subir
     if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
     else if (estado == DESCE_2) estado = PRESO_DISTENDIDO;
   }
   else if (!indoParaCima && cicloSubida) {
-    // Estava subindo → inverter para descer
     if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
     else if (estado == SOBE_2) estado = PRESO_DISTENDIDO;
   }
@@ -125,17 +138,17 @@ void inverterDirecao(bool indoParaCima) {
 void setup() {
   Serial.begin(115200);
 
-  // Anexa os servos aos pinos
   motorCima.attach(MOTOR_CIMA_PIN);
-  motorMola.attach(MOTOR_MOLA_PIN);
+  motorMola1.attach(MOTOR_MOLA1_PIN);
+  motorMola2.attach(MOTOR_Mola2_PIN);
+  motorMola3.attach(MOTOR_MOLA3_PIN);
   motorBaixo.attach(MOTOR_BAIXO_PIN);
 
-  aplicaEstado(estado); // inicia no PRESO_DISTENDIDO
-  Serial.println("Digite 's' para subir, 'd' para descer, 'p' para pausar, 'a' para abortar");
+  aplicaEstado(estado);
+  Serial.println("Digite 's' subir, 'd' descer, 'p' pausar, 'a' abortar");
 }
 
 void loop() {
-  // 🔹 Leitura de comandos do Serial
   if (Serial.available() > 0) {
     char comando = Serial.read();
 
@@ -151,19 +164,19 @@ void loop() {
       cicloDescida = true;
       aplicaEstado(estado);
     }
-    else if (comando == 'p') {
+    else if (comando == 'p') {  // parar
       estado = pausaEstado(estado);
       cicloSubida = false;
       cicloDescida = false;
       aplicaEstado(estado);
     }
-    else if (comando == 'a') {
-      // Primeiro aplica a pausa normal
+    else if (comando == 'a') {  // abortar
       estado = pausaEstado(estado);
       aplicaEstado(estado);
-
-      // Depois força relaxado
-      delay(2000); // transição suave
+      delay(2000);
+      if (estado == PRESO_CONTRAIDO) {
+          setServoContinuo(180, 180, 180, 2000);
+      } 
       estado = ESTADO_RELAXADO;
       cicloSubida = false;
       cicloDescida = false;
@@ -171,9 +184,8 @@ void loop() {
     }
   }
 
-  // 🔹 Avanço automático do ciclo com delay(2000)
   if (cicloSubida) {
-    delay(2000);
+    delay(500); 
     if (estado == PRESO_DISTENDIDO) estado = SOBE_1;
     else if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
     else if (estado == PRESO_CONTRAIDO) estado = SOBE_2;
@@ -182,7 +194,7 @@ void loop() {
   }
 
   if (cicloDescida) {
-    delay(2000);
+    delay(500);
     if (estado == PRESO_DISTENDIDO) estado = DESCE_1;
     else if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
     else if (estado == PRESO_CONTRAIDO) estado = DESCE_2;
