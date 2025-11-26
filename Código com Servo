@@ -1,5 +1,9 @@
 #include <Arduino.h>
 #include <ESP32Servo.h>
+#include "BluetoothSerial.h" // Biblioteca nativa do ESP32 para Bluetooth
+
+// Objeto Bluetooth
+BluetoothSerial SerialBT;
 
 // Servos
 Servo motorCima;
@@ -11,7 +15,7 @@ Servo motorBaixo;
 // Pinos dos servos
 #define MOTOR_CIMA_PIN   27
 #define MOTOR_MOLA1_PIN  13
-#define MOTOR_Mola2_PIN  12
+#define MOTOR_MOLA2_PIN  12
 #define MOTOR_MOLA3_PIN  14
 #define MOTOR_BAIXO_PIN  26
 
@@ -29,9 +33,9 @@ typedef enum {
 // Estado atual
 Estado estado = PRESO_DISTENDIDO;
 
-// Controle do ciclo
-bool cicloSubida = false;
-bool cicloDescida = false;
+// Variavel para saber se o ultimo movimento foi subida (true) ou descida (false)
+// Substitui os antigos bools de ciclo para controlar a inversao
+bool ultimoSentidoFoiSubida = true; 
 
 const char* nomeEstado(Estado e) {
   switch (e) {
@@ -53,23 +57,24 @@ void setServoPosicao(Servo &servo, bool ativo) {
 
 // Move as 3 molas simultaneamente
 void setServoContinuo(int v1, int v2, int v3, unsigned long duracao) {
-  // 1. Manda os 3 começarem a girar
   motorMola1.write(v1);
   motorMola2.write(v2);
   motorMola3.write(v3);
   
-  // 2. Espera o tempo definido (os 3 estão girando agora juntos)
+  // O robo fica bloqueado aqui enquanto se move (o que eh bom para sincronia)
   delay(duracao); 
   
-  // 3. Manda os 3 pararem (90 = neutro)
   motorMola1.write(90); 
   motorMola2.write(90);
   motorMola3.write(90);
 }
 
 void aplicaEstado(Estado e) {
-  Serial.print("Novo estado: ");
-  Serial.println(nomeEstado(e));
+  // Envia status para Debug (USB) e App (Bluetooth)
+  String msg = "Estado: " + String(nomeEstado(e));
+  Serial.println(msg);
+  SerialBT.println(msg);
+
   switch (e) {
     case ESTADO_RELAXADO:
       setServoPosicao(motorCima, false);
@@ -92,7 +97,7 @@ void aplicaEstado(Estado e) {
     case DESCE_1:
       setServoPosicao(motorCima, false);
       setServoPosicao(motorBaixo, true);
-      setServoContinuo(0, 0, 0, 2000);
+      setServoContinuo(0, 0, 0, 2000); 
       break;
 
     case PRESO_CONTRAIDO:
@@ -115,90 +120,112 @@ void aplicaEstado(Estado e) {
   }
 }
 
-// Logica comum de pausa
+// Logica para encontrar o estado seguro mais proximo (pausa)
 Estado pausaEstado(Estado e) {
   if (e == SOBE_1 || e == DESCE_1) return PRESO_CONTRAIDO;
   else if (e == SOBE_2 || e == DESCE_2) return PRESO_DISTENDIDO;
   else return e;
 }
 
-// Inversao imediata de direcao
-void inverterDirecao(bool indoParaCima) {
-  if (indoParaCima && cicloDescida) {
+// Verifica se precisa inverter a direcao baseada no comando atual vs ultimo sentido
+void verificarInversao(bool indoParaCima) {
+  if (indoParaCima && !ultimoSentidoFoiSubida) {
+    // Quero subir, mas estava descendo
     if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
     else if (estado == DESCE_2) estado = PRESO_DISTENDIDO;
+    aplicaEstado(estado);
   }
-  else if (!indoParaCima && cicloSubida) {
+  else if (!indoParaCima && ultimoSentidoFoiSubida) {
+    // Quero descer, mas estava subindo
     if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
     else if (estado == SOBE_2) estado = PRESO_DISTENDIDO;
+    aplicaEstado(estado);
   }
-  aplicaEstado(estado);
+  ultimoSentidoFoiSubida = indoParaCima;
 }
 
 void setup() {
   Serial.begin(115200);
+  
+  // Inicia o Bluetooth
+  SerialBT.begin("Robo_Molas"); 
+  Serial.println("Bluetooth iniciado! Conecte-se e segure o botao para mover.");
 
   motorCima.attach(MOTOR_CIMA_PIN);
   motorMola1.attach(MOTOR_MOLA1_PIN);
-  motorMola2.attach(MOTOR_Mola2_PIN);
+  motorMola2.attach(MOTOR_MOLA2_PIN);
   motorMola3.attach(MOTOR_MOLA3_PIN);
   motorBaixo.attach(MOTOR_BAIXO_PIN);
 
   aplicaEstado(estado);
-  Serial.println("Digite 's' subir, 'd' descer, 'p' pausar, 'a' abortar");
 }
 
 void loop() {
-  if (Serial.available() > 0) {
-    char comando = Serial.read();
+  char comando = 0;
 
-    if (comando == 's') {  // subir
-      inverterDirecao(true);
-      cicloSubida = true;
-      cicloDescida = false;
-      aplicaEstado(estado);
-    }
-    else if (comando == 'd') {  // descer
-      inverterDirecao(false);
-      cicloSubida = false;
-      cicloDescida = true;
-      aplicaEstado(estado);
-    }
-    else if (comando == 'p') {  // parar
-      estado = pausaEstado(estado);
-      cicloSubida = false;
-      cicloDescida = false;
-      aplicaEstado(estado);
-    }
-    else if (comando == 'a') {  // abortar
-      estado = pausaEstado(estado);
-      aplicaEstado(estado);
-      delay(2000);
-      if (estado == PRESO_CONTRAIDO) {
-          setServoContinuo(180, 180, 180, 2000);
-      } 
-      estado = ESTADO_RELAXADO;
-      cicloSubida = false;
-      cicloDescida = false;
-      aplicaEstado(estado);
+  // 1. Limpa o buffer do Bluetooth e pega o ULTIMO caractere recebido.
+  // Isso eh crucial: se o app mandar 50 letras 'F' enquanto voce segura,
+  // e voce soltar, queremos garantir que o robo pare logo, e nao
+  // fique processando as 50 letras antigas.
+  if (SerialBT.available()) {
+    while (SerialBT.available()) {
+      comando = SerialBT.read();
     }
   }
 
-  if (cicloSubida) {
-    delay(500); 
+  // 2. Logica de Controle (Hold to Move)
+  
+  // --- SUBIR (Enquanto segura botao 's' ou 'F') ---
+  if (comando == 's' || comando == 'F') {
+    verificarInversao(true); 
+    
+    // Calcula o proximo passo da subida
     if (estado == PRESO_DISTENDIDO) estado = SOBE_1;
     else if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
     else if (estado == PRESO_CONTRAIDO) estado = SOBE_2;
     else if (estado == SOBE_2) estado = PRESO_DISTENDIDO;
-    aplicaEstado(estado);
+    
+    // Executa. O robo ficara ocupado por 2s ou 0.1s aqui.
+    aplicaEstado(estado); 
   }
-
-  if (cicloDescida) {
-    delay(500);
+  
+  // --- DESCER (Enquanto segura botao 'd' ou 'B') ---
+  else if (comando == 'd' || comando == 'B') {
+    verificarInversao(false); 
+    
+    // Calcula o proximo passo da descida
     if (estado == PRESO_DISTENDIDO) estado = DESCE_1;
     else if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
     else if (estado == PRESO_CONTRAIDO) estado = DESCE_2;
     else if (estado == DESCE_2) estado = PRESO_DISTENDIDO;
+    
     aplicaEstado(estado);
+  }
+  
+  // --- ABORTAR (Botao 'a') ---
+  else if (comando == 'a') {
+    estado = pausaEstado(estado);
+    aplicaEstado(estado);
+    delay(2000);
+    if (estado == PRESO_CONTRAIDO) {
+        setServoContinuo(180, 180, 180, 2000);
+    } 
+    estado = ESTADO_RELAXADO;
+    aplicaEstado(estado);
+  }
+  
+  // --- SOLTOU O BOTAO (Nenhum comando recebido) ---
+  else {
+    // Se nao tem comando, forca a pausa (trava os motores)
+    Estado estadoPausa = pausaEstado(estado);
+    
+    // So aplica se mudou alguma coisa, pra nao ficar mandando comando repetido a toa
+    if (estado != estadoPausa) {
+      estado = estadoPausa;
+      aplicaEstado(estado);
+    }
+    
+    // Pequeno delay pra economizar processamento enquanto espera
+    delay(50);
   }
 }
