@@ -34,12 +34,14 @@ typedef enum {
 Estado estado = PRESO_DISTENDIDO;
 
 // Variavel para saber se o ultimo movimento foi subida (true) ou descida (false)
-// Substitui os antigos bools de ciclo para controlar a inversao
 bool ultimoSentidoFoiSubida = true; 
+
+// Variavel global para memorizar a acao atual (inicia como 'p' de parado)
+char acaoAtual = 'p'; 
 
 const char* nomeEstado(Estado e) {
   switch (e) {
-    case ESTADO_RELAXADO: return "RELAXADO";
+    case ESTADO_RELAXADO: return "ESTADO_RELAXADO";
     case PRESO_DISTENDIDO: return "PRESO_DISTENDIDO";
     case SOBE_1: return "SOBE_1";
     case DESCE_1: return "DESCE_1";
@@ -61,7 +63,7 @@ void setServoContinuo(int v1, int v2, int v3, unsigned long duracao) {
   motorMola2.write(v2);
   motorMola3.write(v3);
   
-  // O robo fica bloqueado aqui enquanto se move (o que eh bom para sincronia)
+  // O robo fica bloqueado aqui enquanto se move
   delay(duracao); 
   
   motorMola1.write(90); 
@@ -70,7 +72,6 @@ void setServoContinuo(int v1, int v2, int v3, unsigned long duracao) {
 }
 
 void aplicaEstado(Estado e) {
-  // Envia status para Debug (USB) e App (Bluetooth)
   String msg = "Estado: " + String(nomeEstado(e));
   Serial.println(msg);
   SerialBT.println(msg);
@@ -120,23 +121,19 @@ void aplicaEstado(Estado e) {
   }
 }
 
-// Logica para encontrar o estado seguro mais proximo (pausa)
 Estado pausaEstado(Estado e) {
   if (e == SOBE_1 || e == DESCE_1) return PRESO_CONTRAIDO;
   else if (e == SOBE_2 || e == DESCE_2) return PRESO_DISTENDIDO;
   else return e;
 }
 
-// Verifica se precisa inverter a direcao baseada no comando atual vs ultimo sentido
 void verificarInversao(bool indoParaCima) {
   if (indoParaCima && !ultimoSentidoFoiSubida) {
-    // Quero subir, mas estava descendo
     if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
     else if (estado == DESCE_2) estado = PRESO_DISTENDIDO;
     aplicaEstado(estado);
   }
   else if (!indoParaCima && ultimoSentidoFoiSubida) {
-    // Quero descer, mas estava subindo
     if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
     else if (estado == SOBE_2) estado = PRESO_DISTENDIDO;
     aplicaEstado(estado);
@@ -146,10 +143,8 @@ void verificarInversao(bool indoParaCima) {
 
 void setup() {
   Serial.begin(115200);
-  
-  // Inicia o Bluetooth
-  SerialBT.begin("Robo_Molas"); 
-  Serial.println("Bluetooth iniciado! Conecte-se e segure o botao para mover.");
+  SerialBT.begin("Robo_Cobra"); 
+  Serial.println("Bluetooth iniciado! Use o Joystick.");
 
   motorCima.attach(MOTOR_CIMA_PIN);
   motorMola1.attach(MOTOR_MOLA1_PIN);
@@ -161,49 +156,46 @@ void setup() {
 }
 
 void loop() {
-  char comando = 0;
-
-  // 1. Limpa o buffer do Bluetooth e pega o ULTIMO caractere recebido.
-  // Isso eh crucial: se o app mandar 50 letras 'F' enquanto voce segura,
-  // e voce soltar, queremos garantir que o robo pare logo, e nao
-  // fique processando as 50 letras antigas.
+  // 1. Leitura e Decodificacao dos Comandos do Joystick
   if (SerialBT.available()) {
     while (SerialBT.available()) {
-      comando = SerialBT.read();
+      char c = SerialBT.read();
+      
+      if (c == 's') acaoAtual = 's';       // Apertou Cima -> Subir
+      else if (c == '0') acaoAtual = 'p';  // Soltou Cima -> Pausar
+      
+      else if (c == 'd') acaoAtual = 'd';  // Apertou Baixo -> Descer
+      else if (c == '1') acaoAtual = 'p';  // Soltou Baixo -> Pausar
+      
+      else if (c == 'a') acaoAtual = 'a';  // Apertou X -> Abortar
+      else if (c == '2') acaoAtual = 'r';  // Soltou X -> Manter Relaxado
+      
+      else if (c == 'i') acaoAtual = 'i';  // Apertou 'i' -> Iniciar/Engatar
     }
   }
 
-  // 2. Logica de Controle (Hold to Move)
+  // 2. Execucao baseada na acaoAtual memorizada
   
-  // --- SUBIR (Enquanto segura botao 's' ou 'F') ---
-  if (comando == 's' || comando == 'F') {
+  if (acaoAtual == 's') { // SUBINDO
     verificarInversao(true); 
-    
-    // Calcula o proximo passo da subida
     if (estado == PRESO_DISTENDIDO) estado = SOBE_1;
     else if (estado == SOBE_1) estado = PRESO_CONTRAIDO;
     else if (estado == PRESO_CONTRAIDO) estado = SOBE_2;
     else if (estado == SOBE_2) estado = PRESO_DISTENDIDO;
-    
-    // Executa. O robo ficara ocupado por 2s ou 0.1s aqui.
     aplicaEstado(estado); 
   }
   
-  // --- DESCER (Enquanto segura botao 'd' ou 'B') ---
-  else if (comando == 'd' || comando == 'B') {
+  else if (acaoAtual == 'd') { // DESCENDO
     verificarInversao(false); 
-    
-    // Calcula o proximo passo da descida
     if (estado == PRESO_DISTENDIDO) estado = DESCE_1;
     else if (estado == DESCE_1) estado = PRESO_CONTRAIDO;
     else if (estado == PRESO_CONTRAIDO) estado = DESCE_2;
     else if (estado == DESCE_2) estado = PRESO_DISTENDIDO;
-    
     aplicaEstado(estado);
   }
   
-  // --- ABORTAR (Botao 'a') ---
-  else if (comando == 'a') {
+  else if (acaoAtual == 'a') { // ABORTANDO
+    // Executa a sequencia de abortar uma vez
     estado = pausaEstado(estado);
     aplicaEstado(estado);
     delay(2000);
@@ -212,20 +204,36 @@ void loop() {
     } 
     estado = ESTADO_RELAXADO;
     aplicaEstado(estado);
+    
+    // Apos abortar, muda automaticamente para 'r' (relaxado) para nao ficar repetindo o delay
+    acaoAtual = 'r'; 
+  }
+
+  else if (acaoAtual == 'i') { // INICIAR (Engatar)
+    if (estado == ESTADO_RELAXADO) {
+        estado = PRESO_DISTENDIDO;
+        aplicaEstado(estado);
+    }
+    // Depois de engatar, volta o comando para 'p' (pausa) para manter a posicao
+    // e evitar reexecutar essa logica desnecessariamente
+    acaoAtual = 'p';
   }
   
-  // --- SOLTOU O BOTAO (Nenhum comando recebido) ---
-  else {
-    // Se nao tem comando, forca a pausa (trava os motores)
+  else if (acaoAtual == 'p') { // PAUSA (Soltou o botao)
     Estado estadoPausa = pausaEstado(estado);
-    
-    // So aplica se mudou alguma coisa, pra nao ficar mandando comando repetido a toa
     if (estado != estadoPausa) {
       estado = estadoPausa;
       aplicaEstado(estado);
     }
-    
-    // Pequeno delay pra economizar processamento enquanto espera
+    delay(50); 
+  }
+  
+  else if (acaoAtual == 'r') { // RELAXADO (Botao X solto)
+    // Garante que fique relaxado
+    if (estado != ESTADO_RELAXADO) {
+      estado = ESTADO_RELAXADO;
+      aplicaEstado(estado);
+    }
     delay(50);
   }
 }
