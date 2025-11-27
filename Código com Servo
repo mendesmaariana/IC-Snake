@@ -53,7 +53,7 @@ const char* nomeEstado(Estado e) {
 }
 
 void setServoPosicao(Servo &servo, bool ativo) {
-  if (ativo) servo.write(90);
+  if (ativo) servo.write(45);
   else servo.write(0);
 }
 
